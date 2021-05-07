@@ -1,8 +1,8 @@
 package com.consdata.kouncil;
 
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -45,14 +45,9 @@ public class KafkaConfiguration {
     @Bean
     public AdminClient adminClient() {
         Properties props = new Properties();
-        props.setProperty("bootstrap.servers", kouncilConfiguration.getBootstrapServers());
-        props.setProperty("client.id", "Kouncil");
-        props.setProperty("metadata.max.age.ms", "3000");
-        props.setProperty("enable.auto.commit", "false");
-        props.setProperty("auto.commit.interval.ms", "1000");
-        props.setProperty("session.timeout.ms", "30000");
-        props.setProperty("key.deserializer", StringDeserializer.class.getName());
-        props.setProperty("value.deserializer", StringDeserializer.class.getName());
+        props.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kouncilConfiguration.getBootstrapServers());
+        props.setProperty(AdminClientConfig.CLIENT_ID_CONFIG, "Kouncil");
+        props.setProperty(AdminClientConfig.METADATA_MAX_AGE_CONFIG, "3000");
         return AdminClient.create(props);
     }
 

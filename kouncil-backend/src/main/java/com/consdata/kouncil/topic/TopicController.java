@@ -1,23 +1,19 @@
 package com.consdata.kouncil.topic;
 
 import com.consdata.kouncil.KouncilConfiguration;
+import com.consdata.kouncil.backwardconsumer.TopicBackwardConsumer;
 import com.consdata.kouncil.logging.EntryExitLogger;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Duration;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 @Slf4j
 @RestController
@@ -34,126 +30,136 @@ public class TopicController {
 
     @GetMapping("/api/topic/messages/{topicName}/{partition}/{offset}")
     public TopicMessagesDto getTopicMessages(@PathVariable("topicName") String topicName,
-                                             @PathVariable("partition") String partitions,
+                                             @PathVariable("partition") String selectedPartitions,
                                              @PathVariable("offset") String offset,
                                              @RequestParam("offset") String offsetShiftParam,
                                              @RequestParam("limit") String limitParam,
                                              @RequestParam(value = "beginningTimestampMillis", required = false) Long beginningTimestampMillis,
                                              @RequestParam(value = "endTimestampMillis", required = false) Long endTimestampMillis) {
         log.debug("TCM01 topicName={}, partition={}, offset={}, offsetParam={}, limit={}, beginningTimestampMillis={}, endTimestampMillis={}",
-                topicName, partitions, offset, offsetShiftParam, limitParam, beginningTimestampMillis, endTimestampMillis);
+                topicName, selectedPartitions, offset, offsetShiftParam, limitParam, beginningTimestampMillis, endTimestampMillis);
         int limit = Integer.parseInt(limitParam);
         long offsetShift = Long.parseLong(offsetShiftParam);
         Properties props = createCommonProperties();
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            List<PartitionInfo> partitionInfos = consumer.partitionsFor(topicName);
-            log.debug("TCM02 partitionInfos.size={}, partitionInfos={}", partitionInfos.size(), partitionInfos);
-            List<TopicPartition> topicPartitions = new ArrayList<>();
-            for (int i = 0; i < partitionInfos.size(); i++) {
-                topicPartitions.add(new TopicPartition(topicName, i));
-            }
-            consumer.assign(topicPartitions);
+            Set<TopicPartition> allTopicPartitions = getAllTopicPartitions(topicName, consumer);
+            Set<TopicPartition> selectedTopicPartitions = getSelectedTopicParitions(topicName, selectedPartitions, allTopicPartitions);
 
-            int[] partitionsArray;
-            if (partitions.equalsIgnoreCase("all")) {
-                partitionsArray = IntStream.rangeClosed(0, topicPartitions.size() - 1).toArray();
-            } else {
-                partitionsArray = Arrays.stream(partitions.split(",")).mapToInt(Integer::parseInt).toArray();
-            }
-
-            Map<Integer, Long> beginningOffsets;
-            if (beginningTimestampMillis != null) {
-                Map<TopicPartition, Long> beginningTimestamps = topicPartitions.stream()
-                        .collect(Collectors.toMap(Function.identity(), ignore -> beginningTimestampMillis));
-                beginningOffsets = consumer.offsetsForTimes(beginningTimestamps).entrySet().stream()
-                        .collect(Collectors.toMap(
-                                k -> k.getKey().partition(),
-                                v -> v.getValue() == null ? -1 : v.getValue().offset()
-                        ));
-            } else {
-                beginningOffsets = consumer
-                        .beginningOffsets(topicPartitions).entrySet().stream()
-                        .collect(Collectors.toMap(k -> k.getKey().partition(), Map.Entry::getValue));
-            }
-
-            final Map<Integer, Long> globalEndOffsets = consumer.endOffsets(topicPartitions).entrySet()
-                    .stream().collect(Collectors.toMap(k -> k.getKey().partition(), Map.Entry::getValue));
-            final Map<Integer, Long> endOffsets;
-            if(endTimestampMillis != null) {
-                Map<TopicPartition, Long> endTimestamps = topicPartitions.stream()
-                        .collect(Collectors.toMap(Function.identity(), ignore -> endTimestampMillis + 1));
-                endOffsets = consumer.offsetsForTimes(endTimestamps).entrySet().stream()
-                        .collect(Collectors.toMap(
-                                k -> k.getKey().partition(),
-                                v -> v.getValue() == null ? globalEndOffsets.get(v.getKey().partition()) : v.getValue().offset()
-                        ));
-            } else {
-                endOffsets = globalEndOffsets;
-            }
+            final Map<TopicPartition, Long> beginningOffsets = getBeginningOffsets(beginningTimestampMillis, consumer, allTopicPartitions);
+            final Map<TopicPartition, Long> endOffsets = getEndOffsets(endTimestampMillis, consumer, allTopicPartitions);
 
             log.debug("TCM03 beginningOffsets={}", beginningOffsets);
             log.debug("TCM04 endOffsets={}", endOffsets);
 
-            long availablePartitions = Arrays.stream(partitionsArray).filter(p -> beginningOffsets.get(p) >= 0).count();
-            for (int j : partitionsArray) {
-                Long startOffsetForPartition = beginningOffsets.get(j);
-                log.debug("TCM05 startOffsetForPartition={}", startOffsetForPartition);
-                if (startOffsetForPartition < 0) {
-                    log.debug("TCM10 startOffsetForPartition is -1, seekToEnd");
-                    consumer.seekToEnd(Collections.singletonList(topicPartitions.get(j)));
-                    continue;
-                }
+            TopicBackwardConsumer<String, String> backwardConsumer = new TopicBackwardConsumer<>(
+                    consumer,
+                    selectedTopicPartitions.stream()
+                            .filter(p -> beginningOffsets.get(p) >= 0)
+                            .collect(Collectors.toSet()),
+                    limit
+            );
 
-                long position = endOffsets.get(j) - offsetShift;
-                log.debug("TCM06 position={}", position);
-                long seekTo = position - (limit / availablePartitions);
-                if (seekTo > startOffsetForPartition) {
-                    log.debug("TCM11 seekTo={}", seekTo);
-                    consumer.seek(topicPartitions.get(j), seekTo);
-                } else {
-                    log.debug("TCM12 seekTo startOffset({})", startOffsetForPartition);
-                    consumer.seek(topicPartitions.get(j), startOffsetForPartition);
-                }
-            }
+            beginningOffsets.forEach(backwardConsumer::setMinOffset);
+            endOffsets.forEach((p, o) -> backwardConsumer.setStartOffset(
+                    p,
+                    o - (selectedTopicPartitions.size() == 1 && selectedTopicPartitions.contains(p) ? offsetShift : 0L)
+            ));
 
-            List<TopicMessage> messages = new ArrayList<>();
-            int i = 0;
-            // couple first polls after seek don't return eny records
-            while (i < 100 && messages.size() < limit) {
-                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(10));
-                for (ConsumerRecord<String, String> record : records) {
-                    if (record.offset() >= endOffsets.get(record.partition())) {
-                        continue;
-                    }
-                    if (messages.size() < limit) {
-                        messages.add(TopicMessage
-                                .builder()
-                                .key(record.key())
-                                .value(record.value())
-                                .offset(record.offset())
-                                .partition(record.partition())
-                                .timestamp(record.timestamp())
-                                .build());
-                    }
-                }
-                i++;
-            }
+
+            List<TopicMessage> messages = backwardConsumer.poll().stream()
+                    .map(record -> TopicMessage
+                            .builder()
+                            .key(record.key())
+                            .value(record.value())
+                            .offset(record.offset())
+                            .partition(record.partition())
+                            .timestamp(record.timestamp())
+                            .build())
+                    .collect(Collectors.toList());
+
             log.debug("TCM20 poll completed records.size={}", messages.size());
-            messages.sort(Comparator.comparing(TopicMessage::getTimestamp));
             TopicMessagesDto topicMessagesDto = TopicMessagesDto.builder()
                     .messages(messages)
-                    .partitionOffsets(beginningOffsets)
-                    .partitionEndOffsets(endOffsets)
+                    .partitionOffsets(beginningOffsets.entrySet().stream()
+                            .collect(Collectors.toMap(k -> k.getKey().partition(), Map.Entry::getValue)))
+                    .partitionEndOffsets(endOffsets.entrySet().stream()
+                            .collect(Collectors.toMap(k -> k.getKey().partition(), Map.Entry::getValue)))
                     // pagination works only for single selected partition
-                    .totalResults(partitionsArray.length == 1
-                            ? endOffsets.get(partitionsArray[0]) - beginningOffsets.get(partitionsArray[0])
-                            : null)
+                    .totalResults(getTotalResultsForPagination(selectedTopicPartitions, beginningOffsets, endOffsets))
                     .build();
-            log.debug("TCM99 topicName={}, partition={}, offset={} topicMessages.size={}", topicName, partitions, offset, topicMessagesDto.getMessages().size());
+            log.debug("TCM99 topicName={}, partition={}, offset={} topicMessages.size={}", topicName, selectedPartitions, offset, topicMessagesDto.getMessages().size());
             return topicMessagesDto;
 
         }
+    }
+
+    private Long getTotalResultsForPagination(Set<TopicPartition> selectedTopicPartitions, Map<TopicPartition, Long> beginningOffsets, Map<TopicPartition, Long> endOffsets) {
+        TopicPartition firstPartition = selectedTopicPartitions.iterator().next();
+        return selectedTopicPartitions.size() == 1
+                ? endOffsets.get(firstPartition) - beginningOffsets.get(firstPartition)
+                : null;
+    }
+
+    private Set<TopicPartition> getSelectedTopicParitions(String topicName, String partitions, Set<TopicPartition> allTopicPartitions) {
+        if (partitions.equalsIgnoreCase("all")) {
+            return allTopicPartitions;
+        }
+
+        Set<TopicPartition> selectedPartitionsFromParam = Arrays.stream(partitions.split(","))
+                .map(v -> new TopicPartition(topicName, Integer.parseInt(v)))
+                .collect(Collectors.toSet());
+
+        return allTopicPartitions.stream()
+                .filter(selectedPartitionsFromParam::contains)
+                .collect(Collectors.toSet());
+    }
+
+    private Set<TopicPartition> getAllTopicPartitions(String topicName, KafkaConsumer<String, String> consumer) {
+        Set<TopicPartition> topicPartitions = consumer.partitionsFor(topicName).stream()
+                .map(partitionInfo -> new TopicPartition(partitionInfo.topic(), partitionInfo.partition()))
+                .collect(Collectors.toSet());
+        log.debug("TCM02 topicPartitions.size={}, topicPartitions={}", topicPartitions.size(), topicPartitions);
+        return topicPartitions;
+    }
+
+    private Map<TopicPartition, Long> getBeginningOffsets(Long beginningTimestampMillis,
+                                                          KafkaConsumer<String, String> consumer,
+                                                          Collection<TopicPartition> allTopicPartitions) {
+        if (beginningTimestampMillis == null) {
+            return consumer
+                    .beginningOffsets(allTopicPartitions).entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        }
+
+        Map<TopicPartition, Long> beginningTimestamps = allTopicPartitions.stream()
+                .collect(Collectors.toMap(Function.identity(), ignore -> beginningTimestampMillis));
+
+        return consumer.offsetsForTimes(beginningTimestamps).entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        v -> v.getValue() == null ? -1 : v.getValue().offset()
+                ));
+    }
+
+    private Map<TopicPartition, Long> getEndOffsets(Long endTimestampMillis,
+                                                    KafkaConsumer<String, String> consumer,
+                                                    Collection<TopicPartition> allTopicPartitions) {
+        final Map<TopicPartition, Long> globalEndOffsets = consumer.endOffsets(allTopicPartitions).entrySet()
+                .stream().collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        if (endTimestampMillis == null) {
+            return globalEndOffsets;
+        }
+
+        Map<TopicPartition, Long> endTimestamps = allTopicPartitions.stream()
+                .collect(Collectors.toMap(Function.identity(), ignore -> endTimestampMillis + 1));
+
+        return consumer.offsetsForTimes(endTimestamps).entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        v -> v.getValue() == null ? globalEndOffsets.get(v.getKey()) : v.getValue().offset()
+                ));
     }
 
     @PostMapping("/api/topic/send/{topic}/{count}")
@@ -178,6 +184,7 @@ public class TopicController {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kouncilConfiguration.getBootstrapServers());
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "30000");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         return props;
