@@ -62,6 +62,7 @@ export class TopicBackendService implements TopicService {
     if (typeof this.selectedPartitions === 'undefined') {
       this.selectedPartitions = Array.from({length: Object.values(this.partitionOffsets).length}, () => 1);
       this.selectedPartitionsChanged$.next(this.selectedPartitions);
+      this.onePartitionSelected();
     }
     if (typeof this.visiblePartitions === 'undefined') {
       this.visiblePartitions = this.partitions.slice(0, this.VISIBLE_PARTITION_QUANTITY);
