@@ -76,6 +76,7 @@ public class TopicController {
                             .partition(record.partition())
                             .timestamp(record.timestamp())
                             .build())
+                    .sorted(Comparator.comparingLong(TopicMessage::getTimestamp))
                     .collect(Collectors.toList());
 
             log.debug("TCM20 poll completed records.size={}", messages.size());

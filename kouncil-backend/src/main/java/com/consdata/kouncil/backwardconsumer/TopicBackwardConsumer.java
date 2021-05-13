@@ -50,8 +50,6 @@ public class TopicBackwardConsumer<K, V> {
             startOffsetsToReset.put(new TopicPartition(record.topic(), record.partition()), record.offset() + 1);
         }
 
-        allRecords.sort(Comparator.comparingLong(ConsumerRecord::timestamp));
-
         startOffsetsToReset.forEach((topicPartition, startOffset) ->
                 consumers.get(topicPartition).seekStartOffset(startOffset));
     }
