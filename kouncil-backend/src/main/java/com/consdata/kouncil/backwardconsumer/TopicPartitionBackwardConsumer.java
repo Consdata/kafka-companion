@@ -35,7 +35,8 @@ class TopicPartitionBackwardConsumer<K, V> {
         consumer.assign(topicPartitionCollection);
 
         long endOffset = calculateEndOffsetFromState(topicPartitionCollection);
-        int maxLimit = calculateMaximumLimit(limit, topicPartitionCollection, endOffset);
+        minOffset = calculateMinimumOffset(topicPartitionCollection);
+        int maxLimit = calculateMaximumLimitFromState(limit, endOffset);
         startOffset = calculateStartOffsetFromState(maxLimit, endOffset);
 
         if (startOffset < 0) {
@@ -76,24 +77,29 @@ class TopicPartitionBackwardConsumer<K, V> {
         return limitedRecords;
     }
 
-    private int calculateMaximumLimit(int limit, Set<TopicPartition> topicPartitionCollection, long endOffset) {
+    private long calculateMinimumOffset(Set<TopicPartition> topicPartitionCollection) {
         Long minOffset = consumer.beginningOffsets(topicPartitionCollection).getOrDefault(topicPartition, 0L);
         if (this.minOffset != null && this.minOffset > minOffset) {
-            minOffset = this.minOffset;
+            return this.minOffset;
         }
+        return minOffset;
+    }
+
+    private int calculateMaximumLimitFromState(int limit, long endOffset) {
         return (int) Math.min(limit, endOffset - minOffset);
     }
 
     private long calculateEndOffsetFromState(Set<TopicPartition> topicPartitionCollection) {
+        long endOffsetFromKafka = consumer
+                .endOffsets(topicPartitionCollection)
+                .getOrDefault(topicPartition, 0L);
         return startOffset == null
-                ? consumer
-                    .endOffsets(topicPartitionCollection)
-                    .getOrDefault(topicPartition, -1L)
-                : startOffset;
+                ? endOffsetFromKafka
+                : Math.min(startOffset, endOffsetFromKafka);
     }
 
     private long calculateStartOffsetFromState(int maxLimit, long endOffset) {
-        long startOffset = endOffset - maxLimit;
+        long startOffset = maxLimit == 0 ? -1 : endOffset - maxLimit;
         if (startOffset < minOffset) {
             return endOffset > minOffset ? minOffset : -1L;
         }
