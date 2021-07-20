@@ -22,6 +22,7 @@
     "@angular/platform-browser": "^12.1.1",
     "@angular/platform-browser-dynamic": "^12.1.1",
     "@angular/router": "^12.1.1",
+    "@stomp/ng2-stompjs": "^8.0.0",
     "@swimlane/ngx-datatable": "^19.0.0",
     "bootstrap": "^4.6.0",
     "core-js": "^2.6.12",
@@ -33,10 +34,7 @@
     "rxjs": "^6.6.6",
     "rxjs-compat": "^6.6.6",
     "tslib": "^2.1.0",
-    "zone.js": "~0.11.4",
-    "net": "^1.0.2",
-    "sockjs-client": "^1.3.0",
-    "stompjs": "^2.3.3"
+    "zone.js": "~0.11.4"
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "~12.1.1",

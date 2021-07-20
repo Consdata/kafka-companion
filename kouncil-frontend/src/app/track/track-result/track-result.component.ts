@@ -9,8 +9,7 @@ import {ServersService} from '../../servers.service';
 import {MessageViewComponent} from '../../topic/message/message-view.component';
 import {TrackService} from '../track.service';
 import {TrackFilter} from '../track-filter/track-filter';
-import * as Stomp from 'stompjs';
-import * as SockJS from 'sockjs-client';
+import {RxStompService} from '@stomp/ng2-stompjs';
 import {Crypto} from '../../util/crypto';
 
 @Component({
@@ -73,13 +72,13 @@ import {Crypto} from '../../util/crypto';
 })
 export class TrackResultComponent implements OnInit, OnDestroy {
 
-  filteredRows = [];
-  allRows = [];
+  @ViewChild('table') table: any;
   searchSubscription: Subscription;
   trackFilterSubscription: Subscription;
-  @ViewChild('table') table: any;
+  topicSubscription: Subscription;
+  filteredRows = [];
+  allRows = [];
   phrase: string;
-  stompClient: any;
   asyncHandle: string;
 
   constructor(private route: ActivatedRoute,
@@ -88,7 +87,8 @@ export class TrackResultComponent implements OnInit, OnDestroy {
               private progressBarService: ProgressBarService,
               private trackService: TrackService,
               private drawerService: DrawerService,
-              private servers: ServersService) {
+              private servers: ServersService,
+              private rxStompService: RxStompService) {
   }
 
   private static tryParseJson(message): string {
@@ -113,25 +113,18 @@ export class TrackResultComponent implements OnInit, OnDestroy {
       this.getEvents(trackFilter);
     });
     if (this.trackService.isAsyncEnable()) {
-      this.initializeWS();
+      this.asyncHandle = Crypto.uuidv4();
+      this.topicSubscription = this.rxStompService.watch(TrackResultComponent.getDestination(this.asyncHandle))
+        .subscribe((message) => {
+          this.onMessageReceived(message);
+        });
     }
-  }
-
-  errorCallBack(error) {
-    console.log('WebSocket errorCallBack -> ' + error);
-    setTimeout(() => {
-      this.initializeWS();
-    }, 5000);
   }
 
   ngOnDestroy() {
     this.searchSubscription.unsubscribe();
     this.trackFilterSubscription.unsubscribe();
-    if (this.stompClient !== null) {
-      this.stompClient.unsubscribe(TrackResultComponent.getDestination(this.asyncHandle));
-      this.stompClient.disconnect();
-      console.log('WebSocket disconnected');
-    }
+    this.topicSubscription.unsubscribe();
   }
 
   onMessageReceived(message) {
@@ -156,19 +149,6 @@ export class TrackResultComponent implements OnInit, OnDestroy {
 
   isLoading(): boolean {
     return this.progressBarService.progressSub.getValue();
-  }
-
-  private initializeWS() {
-    console.log('Initialize WebSocket');
-    const ws = new SockJS('/ws');
-    this.stompClient = Stomp.over(ws);
-    this.asyncHandle = Crypto.uuidv4();
-    const _this = this;
-    this.stompClient.connect({}, function () {
-      _this.stompClient.subscribe(TrackResultComponent.getDestination(_this.asyncHandle), function (sdkEvent) {
-        _this.onMessageReceived(sdkEvent);
-      });
-    }, this.errorCallBack);
   }
 
   private filterRows() {

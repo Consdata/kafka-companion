@@ -2,27 +2,30 @@ package com.consdata.kouncil.track;
 
 import org.springframework.stereotype.Service;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class DestinationStore {
 
-    private final Set<String> activeDestinations = new HashSet<>();
+    /**
+     * (SessionId, Destination)
+     */
+    private final Map<String, String> activeDestinations = new HashMap<>();
 
-    public void registerDestination(String destination) {
-        activeDestinations.add(destination);
+    public void registerDestination(String sessionId, String destination) {
+        activeDestinations.put(sessionId, destination);
     }
 
-    public void unregisterDestination(String destination) {
-        activeDestinations.remove(destination);
+    public void unregisterDestination(String sessionId) {
+        activeDestinations.remove(sessionId);
     }
 
     public boolean destinationIsActive(String destination) {
-        return activeDestinations.contains(destination);
+        return activeDestinations.containsValue(destination);
     }
 
-    public Set<String> getActiveDestinations() {
+    public Map<String, String> getActiveDestinations() {
         return this.activeDestinations;
     }
 }

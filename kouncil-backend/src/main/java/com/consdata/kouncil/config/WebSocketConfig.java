@@ -33,7 +33,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws").setAllowedOrigins("http://localhost:4200", "http://localhost:8080").withSockJS();
+        registry.addEndpoint("/ws").setAllowedOrigins("http://localhost:4200", "http://localhost:8080");
     }
 
     @EventListener
@@ -52,17 +52,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void onSubscribed(SessionSubscribeEvent event) {
         StompHeaderAccessor sha = StompHeaderAccessor.wrap(event.getMessage());
         log.debug("[Subscribed] {}, {}", sha.getSessionId(), sha.getDestination());
-        destinationStore.registerDestination(sha.getDestination());
+        destinationStore.registerDestination(sha.getSessionId(), sha.getDestination());
     }
 
-    /**
-     * Destination is not present in unsubscribe event so as a workaround, destination
-     * is passed from frontend as subscriptionId :/
-     */
     @EventListener
     public void onUnsubscribed(SessionUnsubscribeEvent event) {
         StompHeaderAccessor sha = StompHeaderAccessor.wrap(event.getMessage());
-        log.debug("[Unsubscribed] {}, {}", sha.getSessionId(), sha.getSubscriptionId());
-        destinationStore.unregisterDestination(sha.getSubscriptionId());
+        log.debug("[Unsubscribed] {}", sha.getSessionId());
+        destinationStore.unregisterDestination(sha.getSessionId());
     }
 }

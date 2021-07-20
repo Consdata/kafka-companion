@@ -58,6 +58,8 @@ import {TrackService} from './track/track.service';
 import {TrackBackendService} from './track/track.backend.service';
 import {TrackDemoService} from './track/track.demo.service';
 import {NgxMatSelectSearchModule} from 'ngx-mat-select-search';
+import {InjectableRxStompConfig, RxStompService, rxStompServiceFactory} from '@stomp/ng2-stompjs';
+import {RxStompConfig} from './rx-stomp.config';
 import {EnumToArrayPipe} from './track/track-filter/enum-to-array.pipe';
 
 @NgModule({
@@ -151,7 +153,15 @@ import {EnumToArrayPipe} from './track/track-filter/enum-to-array.pipe';
       useFactory: configProviderFactory,
       deps: [ServersService],
       multi: true
-    }
+    }, {
+      provide: InjectableRxStompConfig,
+      useValue: RxStompConfig,
+    },
+    {
+      provide: RxStompService,
+      useFactory: rxStompServiceFactory,
+      deps: [InjectableRxStompConfig],
+    },
   ],
   bootstrap: [AppComponent]
 })
